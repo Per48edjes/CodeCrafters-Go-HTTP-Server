@@ -1,48 +1,33 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"net"
+	"net/http"
 	"os"
-	"strings"
 )
 
 func main() {
-	l, err := net.Listen("tcp", "0.0.0.0:4221")
-	if err != nil {
-		fmt.Println("Failed to bind to port 4221")
-		os.Exit(1)
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mux.HandleFunc("GET /echo/{str}", func(w http.ResponseWriter, r *http.Request) {
+		str := r.PathValue("str")
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(str))
+	})
+
+	server := &http.Server{
+		Addr:    "0.0.0.0:4221",
+		Handler: mux,
 	}
 
-	conn, err := l.Accept()
-	if err != nil {
-		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
-	}
-	defer conn.Close()
-
-	reader := bufio.NewReader(conn)
-	requestLine, err := reader.ReadString('\n')
-	if err != nil {
-		fmt.Println("Error reading request: ", err.Error())
-		os.Exit(1)
-	}
-
-	parts := strings.Split(strings.TrimSpace(requestLine), " ")
-	path := ""
-	if len(parts) >= 2 {
-		path = parts[1]
-	}
-
-	statusLine := "HTTP/1.1 404 Not Found\r\n\r\n"
-	if path == "/" {
-		statusLine = "HTTP/1.1 200 OK\r\n\r\n"
-	}
-
-	_, err = conn.Write([]byte(statusLine))
-	if err != nil {
-		fmt.Println("Error writing response: ", err.Error())
+	fmt.Println("Server listening on 0.0.0.0:4221")
+	if err := server.ListenAndServe(); err != nil {
+		fmt.Println("Failed to start server:", err)
 		os.Exit(1)
 	}
 }
