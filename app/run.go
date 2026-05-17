@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/Per48edjes/CodeCrafters-Go-HTTP-Server/app/httpserver"
 )
 
 // run is the real entrypoint for the server. It takes OS-level dependencies as
@@ -27,7 +28,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 
 	srv := NewServer(config)
 
-	httpServer := &http.Server{
+	server := &httpserver.Server{
 		Addr:    net.JoinHostPort("0.0.0.0", "4221"),
 		Handler: srv,
 		BaseContext: func(l net.Listener) context.Context {
@@ -35,16 +36,13 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 		},
 	}
 
-	// Start the server in a separate goroutine so we can listen for the
-	// cancellation signal in the main goroutine.
 	go func() {
-		fmt.Fprintf(stdout, "Server listening on %s\n", httpServer.Addr)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		fmt.Fprintf(stdout, "Server listening on %s\n", server.Addr)
+		if err := server.ListenAndServe(); err != nil && err != httpserver.ErrServerClosed {
 			fmt.Fprintf(stdout, "Server error: %s\n", err)
 		}
 	}()
 
-	// Block until the context is cancelled (OS signal received).
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -53,13 +51,10 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 
 		fmt.Fprintf(stdout, "Shutting down server...\n")
 
-		// Give in-flight requests a deadline to complete. Handlers observing
-		// r.Context().Done() will be notified because the base context is already
-		// cancelled at this point (it's the same ctx we derived from signal.NotifyContext).
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
 
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		if err := server.Shutdown(shutdownCtx); err != nil {
 			fmt.Fprintf(stdout, "Server forced to shutdown: %s\n", err)
 		}
 	}()
