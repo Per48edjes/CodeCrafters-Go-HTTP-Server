@@ -13,5 +13,6 @@ func addRoutes(mux *http.ServeMux, config Config) {
 	mux.Handle("GET /echo/{str}", handleEcho())
 	mux.Handle("GET /user-agent", handleUserAgent())
 	mux.Handle("GET /files/{filename}", handleGetFile(config.DataDirectory))
+	mux.Handle("POST /files/{filename}", handlePostFile(config.DataDirectory))
 	mux.Handle("GET /slow", handleSlow())
 }

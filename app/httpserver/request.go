@@ -11,18 +11,23 @@ import (
 )
 
 // ParseRequest reads raw HTTP/1.1 bytes from the reader and constructs a
-// standard *http.Request. This is the hand-rolled equivalent of what net/http
-// does internally when it reads from a connection.
+// standard *http.Request that can be dispatched to any http.Handler or
+// http.ServeMux.
 //
-// HTTP/1.1 request wire format (RFC 9112):
+// It parses the three components of an HTTP message (RFC 9112):
 //
-//	GET /echo/hello HTTP/1.1\r\n      ← request line
-//	Host: localhost:4221\r\n           ← headers (one per line)
-//	Content-Length: 5\r\n
-//	\r\n                               ← blank line marks end of headers
-//	hello                              ← body (optional, length from Content-Length)
+//  1. Request line:  METHOD /path HTTP/1.1\r\n
+//  2. Headers:       Key: Value\r\n (repeated, terminated by blank line)
+//  3. Body:          Bounded by Content-Length header (chunked not supported)
+//
+// The returned request's Body is an io.LimitReader bounded to Content-Length
+// bytes. If no Content-Length is present, Body is http.NoBody. On a keep-alive
+// connection, the caller must drain any unread body bytes before reading the
+// next request to keep the stream aligned.
+//
+// Returns an error if the connection is closed (io.EOF), the request line is
+// malformed, or headers cannot be parsed.
 func ParseRequest(reader *bufio.Reader) (*http.Request, error) {
-	// --- Parse the request line ---
 	requestLine, err := reader.ReadString('\n')
 	if err != nil {
 		return nil, fmt.Errorf("read request line: %w", err)
@@ -43,7 +48,6 @@ func ParseRequest(reader *bufio.Reader) (*http.Request, error) {
 		return nil, fmt.Errorf("parse URL %q: %w", rawURL, err)
 	}
 
-	// --- Parse headers ---
 	headers := make(http.Header)
 	for {
 		line, err := reader.ReadString('\n')
@@ -52,7 +56,6 @@ func ParseRequest(reader *bufio.Reader) (*http.Request, error) {
 		}
 		line = strings.TrimRight(line, "\r\n")
 
-		// Empty line marks end of headers
 		if line == "" {
 			break
 		}
@@ -67,7 +70,6 @@ func ParseRequest(reader *bufio.Reader) (*http.Request, error) {
 		headers.Add(key, value)
 	}
 
-	// --- Parse body ---
 	var body io.ReadCloser = http.NoBody
 	if cl := headers.Get("Content-Length"); cl != "" {
 		length, err := strconv.Atoi(cl)
@@ -79,7 +81,7 @@ func ParseRequest(reader *bufio.Reader) (*http.Request, error) {
 		}
 	}
 
-	req := &http.Request{
+	return &http.Request{
 		Method:     method,
 		URL:        parsedURL,
 		Proto:      proto,
@@ -87,7 +89,5 @@ func ParseRequest(reader *bufio.Reader) (*http.Request, error) {
 		Body:       body,
 		Host:       headers.Get("Host"),
 		RequestURI: rawURL,
-	}
-
-	return req, nil
+	}, nil
 }

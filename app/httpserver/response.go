@@ -4,20 +4,25 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"sync"
 )
 
 // responseWriter implements http.ResponseWriter over a raw net.Conn.
-// Unlike net/http's internal implementation, this does NOT auto-inject
-// Date, Server, Content-Length, or any other headers. Handlers get exactly
-// the response they write — nothing more.
+//
+// Unlike net/http's internal response writer, this does NOT:
+//   - Auto-inject headers (Date, Server, Content-Length, Content-Type)
+//   - Buffer writes (each Write call goes directly to the TCP connection)
+//   - Sniff content type from the response body
+//
+// Handlers are responsible for setting all required headers explicitly,
+// including Content-Length for keep-alive connections (without it, the client
+// cannot determine where the response body ends).
+//
+// This type is not safe for concurrent use — it is owned by a single goroutine
+// for the lifetime of one request (HTTP/1.1 is serial per connection).
 type responseWriter struct {
-	conn          net.Conn
-	headers       http.Header
-	wroteHeader   bool
-	statusCode    int
-	headerWritten bool
-	mu            sync.Mutex
+	conn        net.Conn
+	headers     http.Header
+	wroteHeader bool
 }
 
 func newResponseWriter(conn net.Conn) *responseWriter {
@@ -27,43 +32,36 @@ func newResponseWriter(conn net.Conn) *responseWriter {
 	}
 }
 
-// Header returns the response header map. Handlers call this to set headers
-// before WriteHeader or Write is called.
+// Header returns the response header map. Handlers call w.Header().Set(...)
+// to add headers before WriteHeader or Write is called. Headers set after
+// WriteHeader are ignored (they've already been flushed to the wire).
 func (rw *responseWriter) Header() http.Header {
 	return rw.headers
 }
 
-// WriteHeader sends the HTTP status line and headers to the connection.
-// It can only be called once — subsequent calls are no-ops.
+// WriteHeader sends the HTTP/1.1 status line and all accumulated headers to
+// the connection. Subsequent calls are no-ops — the status and headers can
+// only be sent once per response.
 func (rw *responseWriter) WriteHeader(statusCode int) {
-	rw.mu.Lock()
-	defer rw.mu.Unlock()
-
 	if rw.wroteHeader {
 		return
 	}
 	rw.wroteHeader = true
-	rw.statusCode = statusCode
 
-	// Write status line: "HTTP/1.1 200 OK\r\n"
-	statusText := http.StatusText(statusCode)
-	statusLine := fmt.Sprintf("HTTP/1.1 %d %s\r\n", statusCode, statusText)
+	statusLine := fmt.Sprintf("HTTP/1.1 %d %s\r\n", statusCode, http.StatusText(statusCode))
 	rw.conn.Write([]byte(statusLine))
 
-	// Write headers: "Key: Value\r\n" for each
 	for key, values := range rw.headers {
 		for _, v := range values {
 			rw.conn.Write([]byte(fmt.Sprintf("%s: %s\r\n", key, v)))
 		}
 	}
 
-	// End of headers
 	rw.conn.Write([]byte("\r\n"))
 }
 
-// Write writes body bytes to the connection. If WriteHeader hasn't been
-// called yet, it implicitly calls WriteHeader(200) first — matching the
-// behavior of net/http's ResponseWriter.
+// Write sends body bytes to the connection. If WriteHeader has not been called,
+// it implicitly sends a 200 OK status first (matching net/http's behavior).
 func (rw *responseWriter) Write(data []byte) (int, error) {
 	if !rw.wroteHeader {
 		rw.WriteHeader(http.StatusOK)

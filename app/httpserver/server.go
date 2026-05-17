@@ -5,11 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 // ErrServerClosed is returned by ListenAndServe after a clean Shutdown().
@@ -17,24 +17,27 @@ var ErrServerClosed = errors.New("http: server closed")
 
 // Server is a minimal HTTP/1.1 server built on raw TCP. It accepts connections,
 // parses HTTP requests by hand, and dispatches them to an http.Handler — the
-// same interface used by net/http. This means you can swap between this server
-// and http.Server without changing any handler, middleware, or routing code.
+// same interface used by net/http. This means handlers, middleware, and routers
+// (including http.ServeMux) work identically with this server.
 //
 // Unlike net/http's Server, this implementation does NOT:
-//   - Auto-inject Date, Server, or Content-Length headers
-//   - Support keep-alive (closes connection after each response)
+//   - Auto-inject Date, Server, Content-Type, or Content-Length headers
 //   - Support TLS, HTTP/2, or chunked transfer encoding
+//   - Buffer responses (writes go directly to the connection)
 //
 // It DOES:
 //   - Accept concurrent connections (goroutine per connection)
+//   - Support HTTP/1.1 keep-alive (multiple requests per connection)
 //   - Propagate a base context to all request handlers
+//   - Drain unread request bodies between keep-alive requests
 //   - Support graceful shutdown via Shutdown(ctx)
 type Server struct {
 	Addr    string
 	Handler http.Handler
 
-	// BaseContext optionally provides the base context for all requests.
-	// If nil, context.Background() is used.
+	// BaseContext optionally provides the base context for all requests on
+	// all connections. If nil, context.Background() is used. Cancelling this
+	// context signals all in-flight handlers via r.Context().Done().
 	BaseContext func(net.Listener) context.Context
 
 	listener   net.Listener
@@ -59,6 +62,7 @@ func (s *Server) ListenAndServe() error {
 	return s.serve(ln)
 }
 
+// serve runs the accept loop, spawning a goroutine per connection.
 func (s *Server) serve(ln net.Listener) error {
 	var baseCtx context.Context
 	if s.BaseContext != nil {
@@ -81,6 +85,10 @@ func (s *Server) serve(ln net.Listener) error {
 	}
 }
 
+// handleConn runs the HTTP/1.1 keep-alive loop for a single connection.
+// It reads requests sequentially (HTTP/1.1 requires ordered responses on a
+// single connection), dispatches each to the handler, then drains any unread
+// body bytes before reading the next request.
 func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 	defer s.activeConn.Done()
 	defer conn.Close()
@@ -88,34 +96,20 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	for {
-		if baseCtx.Err() != nil {
-			return
-		}
-
-		// Set a short read deadline so we don't block forever waiting for
-		// the next request. If the deadline fires, we check whether shutdown
-		// is in progress. If not, we extend the deadline and try again.
-		conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-
 		req, err := ParseRequest(reader)
 		if err != nil {
-			if baseCtx.Err() != nil {
-				return
-			}
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				continue
-			}
 			return
 		}
-
-		// Clear the deadline for handler execution — handlers may do
-		// slow work and shouldn't be constrained by the keep-alive poll interval.
-		conn.SetReadDeadline(time.Time{})
 
 		req = req.WithContext(baseCtx)
 
 		w := newResponseWriter(conn)
 		s.Handler.ServeHTTP(w, req)
+
+		if req.Body != nil {
+			io.Copy(io.Discard, req.Body)
+			req.Body.Close()
+		}
 
 		if req.Header.Get("Connection") == "close" {
 			return
@@ -123,9 +117,10 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 	}
 }
 
-// Shutdown gracefully stops the server. It closes the listener (no new
-// connections), then waits for all in-flight requests to complete or for
-// the context to expire — whichever comes first.
+// Shutdown gracefully stops the server. It marks the server as shutting down,
+// closes the listener (stopping new connections), then waits for all in-flight
+// requests to complete. If the context expires before all connections drain,
+// it returns the context error.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.inShutdown.Store(true)
 

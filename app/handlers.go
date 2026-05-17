@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -72,6 +73,33 @@ func handleGetFile(directory string) http.Handler {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 		w.WriteHeader(http.StatusOK)
 		w.Write(data)
+	})
+}
+
+// handlePostFile returns a handler that writes the request body to a file in
+// the given directory. The filename comes from the URL path parameter.
+func handlePostFile(directory string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		filename := r.PathValue("filename")
+		path := filepath.Join(directory, filename)
+
+		if r.Context().Err() != nil {
+			return
+		}
+
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Length", "0")
+		w.WriteHeader(http.StatusCreated)
 	})
 }
 
