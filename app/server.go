@@ -2,13 +2,6 @@ package main
 
 import "net/http"
 
-// Config holds all configuration for the server, parsed from command-line
-// flags or environment variables. Keeping it in a struct makes it easy to
-// pass around and test with different values.
-type Config struct {
-	DataDirectory string
-}
-
 // NewServer is the top-level constructor for the HTTP service. It takes all
 // dependencies as explicit arguments and returns an http.Handler ready to be
 // mounted on an http.Server.

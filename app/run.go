@@ -29,8 +29,9 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	srv := NewServer(config)
 
 	server := &httpserver.Server{
-		Addr:    net.JoinHostPort("0.0.0.0", "4221"),
-		Handler: srv,
+		Addr:           net.JoinHostPort("0.0.0.0", "4221"),
+		Handler:        srv,
+		RequestTimeout: config.RequestTimeout,
 		BaseContext: func(l net.Listener) context.Context {
 			return ctx
 		},
@@ -56,10 +57,11 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			fmt.Fprintf(stdout, "Server forced to shutdown: %s\n", err)
+		} else {
+			fmt.Fprintf(stdout, "Server exited cleanly\n")
 		}
 	}()
 
 	wg.Wait()
-	fmt.Fprintf(stdout, "Server exited cleanly\n")
 	return nil
 }

@@ -98,7 +98,6 @@ func handlePostFile(directory string) http.Handler {
 			return
 		}
 
-		w.Header().Set("Content-Length", "0")
 		w.WriteHeader(http.StatusCreated)
 	})
 }
