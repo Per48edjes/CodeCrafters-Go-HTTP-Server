@@ -1,9 +1,23 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"strings"
 )
+
+type contextKey struct{ name string }
+
+var encodingsKey = &contextKey{"supportedEncodings"}
+
+var serverSupportedEncodings = []string{"gzip"}
+
+func SupportedEncodings(ctx context.Context) []string {
+	if v, ok := ctx.Value(encodingsKey).([]string); ok {
+		return v
+	}
+	return nil
+}
 
 // withContextGuard is middleware that short-circuits request handling if the
 // server's base context has already been cancelled. This prevents handlers from
@@ -32,24 +46,44 @@ func withContextGuard(next http.Handler) http.Handler {
 
 func withContentEncoding(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if encoding := negotiateEncoding(r); encoding != "" {
+		negotiated := negotiateEncodings(r)
+
+		ctx := context.WithValue(r.Context(), encodingsKey, negotiated)
+		r = r.WithContext(ctx)
+
+		if encoding := preferEncoding(negotiated); encoding != "" {
 			w.Header().Set("Content-Encoding", encoding)
 		}
+
 		next.ServeHTTP(w, r)
 	})
 }
 
-func negotiateEncoding(r *http.Request) string {
+func negotiateEncodings(r *http.Request) []string {
 	accepted := r.Header.Get("Accept-Encoding")
 	if accepted == "" {
-		return ""
+		return nil
 	}
 
+	var negotiated []string
 	for _, token := range strings.Split(accepted, ",") {
-		if strings.TrimSpace(token) == "gzip" {
-			return "gzip"
+		token = strings.TrimSpace(token)
+		for _, supported := range serverSupportedEncodings {
+			if token == supported {
+				negotiated = append(negotiated, token)
+				break
+			}
 		}
 	}
 
+	return negotiated
+}
+
+func preferEncoding(negotiated []string) string {
+	for _, enc := range negotiated {
+		if enc == "gzip" {
+			return "gzip"
+		}
+	}
 	return ""
 }
