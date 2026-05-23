@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -10,8 +11,9 @@ import (
 // flags or environment variables. Keeping it in a struct makes it easy to
 // pass around and test with different values.
 type Config struct {
-	DataDirectory  string
-	RequestTimeout time.Duration
+	DataDirectory      string
+	RequestTimeout     time.Duration
+	SupportedEncodings []string
 }
 
 // parseConfig processes command-line arguments into a Config struct.
@@ -23,13 +25,23 @@ func parseConfig(args []string) (Config, error) {
 
 	directory := fs.String("directory", "", "directory to serve files from")
 	requestTimeout := fs.Duration("request-timeout", 30*time.Second, "maximum duration for a single request")
+	supportedEncodings := fs.String("supported-encodings", "", "comma-separated list of supported content encodings")
 
 	if err := fs.Parse(args[1:]); err != nil {
 		return Config{}, fmt.Errorf("parse flags: %w", err)
 	}
 
+	var encodings []string
+	for _, token := range strings.Split(*supportedEncodings, ",") {
+		token = strings.TrimSpace(token)
+		if token != "" {
+			encodings = append(encodings, token)
+		}
+	}
+
 	return Config{
-		DataDirectory:  *directory,
-		RequestTimeout: *requestTimeout,
+		DataDirectory:      *directory,
+		RequestTimeout:     *requestTimeout,
+		SupportedEncodings: encodings,
 	}, nil
 }

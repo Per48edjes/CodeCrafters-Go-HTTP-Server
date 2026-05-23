@@ -25,6 +25,9 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("parse config: %w", err)
 	}
+	if len(config.SupportedEncodings) == 0 {
+		config.SupportedEncodings = []string{"gzip"}
+	}
 
 	srv := NewServer(config)
 

@@ -22,11 +22,21 @@ func handleIndex() http.Handler {
 func handleEcho() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		str := r.PathValue("str")
+		body := []byte(str)
+
+		if w.Header().Get("Content-Encoding") == "gzip" {
+			compressed, err := gzipBytes(body)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			body = compressed
+		}
 
 		w.Header().Set("Content-Type", "text/plain")
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(str)))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(str))
+		w.Write(body)
 	})
 }
 

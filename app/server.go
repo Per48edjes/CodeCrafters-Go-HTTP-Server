@@ -20,8 +20,8 @@ func NewServer(config Config) http.Handler {
 	//   handler = logging(handler)
 	//   handler = cors(handler)
 	var handler http.Handler = mux
-	handler = withContentEncoding(handler)
-	handler = withContextGuard(handler)
+	handler = withContentEncoding(config.SupportedEncodings)(handler)
+	handler = withContextGuard()(handler)
 
 	return handler
 }
