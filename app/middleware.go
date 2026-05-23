@@ -1,6 +1,9 @@
 package main
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
 
 // withContextGuard is middleware that short-circuits request handling if the
 // server's base context has already been cancelled. This prevents handlers from
@@ -25,4 +28,28 @@ func withContextGuard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func withContentEncoding(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if encoding := negotiateEncoding(r); encoding != "" {
+			w.Header().Set("Content-Encoding", encoding)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func negotiateEncoding(r *http.Request) string {
+	accepted := r.Header.Get("Accept-Encoding")
+	if accepted == "" {
+		return ""
+	}
+
+	for _, token := range strings.Split(accepted, ",") {
+		if strings.TrimSpace(token) == "gzip" {
+			return "gzip"
+		}
+	}
+
+	return ""
 }
