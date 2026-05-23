@@ -134,6 +134,11 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 		req = req.WithContext(reqCtx)
 
 		w := newResponseWriter(conn)
+
+		if req.Header.Get("Connection") == "close" {
+			w.Header().Set("Connection", "close")
+		}
+
 		s.Handler.ServeHTTP(w, req)
 		w.finish()
 
@@ -144,9 +149,9 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 			req.Body.Close()
 		}
 
-		// Close connection if: client requested it, or the response has no
-		// Content-Length (client can't determine body end on keep-alive).
-		if req.Header.Get("Connection") == "close" || w.headers.Get("Content-Length") == "" {
+		// Close connection if: we told the client we're closing, or the
+		// response has no Content-Length (client can't determine body end on keep-alive).
+		if w.headers.Get("Connection") == "close" || w.headers.Get("Content-Length") == "" {
 			return
 		}
 	}
